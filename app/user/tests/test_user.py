@@ -10,6 +10,9 @@ from rest_framework import status
 
 
 CREATE_USER_URL = reverse('user:create')
+CREATE_TOKEN_URL = reverse('user:token')
+MY_PROFILE_URL = reverse('user:myprofile')
+
 
 def create_user(**params):
     return get_user_model().objects.create_user(**params)
@@ -61,3 +64,104 @@ class PublicUserApiTests(TestCase):
         self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
         not_exist = get_user_model().objects.filter(email=payload['email']).exists()
         self.assertFalse(not_exist)
+
+    def test_create_token_success(self):
+        """ test success of token creation """
+        user_data = {
+            'email': 'test@example.com',
+            'password': 'pass123',
+            'name': 'Test Name'
+        }
+        create_user(**user_data)
+
+        payload = {
+            'email': user_data['email'],
+            'password': user_data['password']
+        }
+        res = self.client.post(CREATE_TOKEN_URL, payload)
+
+        self.assertIn('token', res.data)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+    
+    def test_create_token_with_wrong_password(self):
+        """ test failure of token creation with wrong password """
+        user_data = {
+            'email': 'test@example.com',
+            'password': 'pass123',
+            'name': 'Test Name'
+        }
+        create_user(**user_data)
+
+        payload = {
+            'email': user_data['email'],
+            'password': 'wrongpass123'
+        }
+        res = self.client.post(CREATE_TOKEN_URL, payload)
+
+        self.assertNotIn('token', res)
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_create_token_with_empty_password(self):
+        """ test failure of token creation with empty password """
+        user_data = {
+            'email': 'test@example.com',
+            'password': 'pass123',
+            'name': 'Test Name'
+        }
+        create_user(**user_data)
+
+        payload = {
+            'email': user_data['email'],
+            'password': ''
+        }
+        res = self.client.post(CREATE_TOKEN_URL, payload)
+
+        self.assertNotIn('token', res)
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+    
+    def test_failure_access_to_my_profile_unauth(self):
+        """ test failure access to my profile page if I am not auth (no token) """
+        res = self.client.get(MY_PROFILE_URL)
+
+        self.assertEqual(res.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class PrivateUserApiTests(TestCase):
+    """ test apis for private user (with token) """
+
+    def setUp(self):
+        self.payload = {
+            'email': 'test@example.com',
+            'password': 'testpass',
+            'name': 'Test Name'
+        }
+        self.client = APIClient()
+        self.user = create_user(**self.payload)
+        self.client.force_authenticate(user=self.user)
+    
+    def test_access_my_profile_success(self):
+        res = self.client.get(MY_PROFILE_URL)
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data, {
+            'name': self.user.name,
+            'email': self.user.email,
+        })
+    
+    def test_failure_post_to_my_profile(self):
+        res = self.client.post(MY_PROFILE_URL, {})
+
+        self.assertEqual(res.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def test_update_my_profile(self):
+        newdata = {
+            'name': 'new name',
+            'password': 'newpassword123'
+        }
+
+        res = self.client.patch(MY_PROFILE_URL, newdata)
+
+        self.user.refresh_from_db()
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(self.user.name, newdata['name'])
+        self.assertTrue(self.user.check_password(newdata['password']))
